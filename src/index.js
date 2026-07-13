@@ -50,14 +50,18 @@ function resetAllGroups() {
   }
 }
 
+function formatRemaining(remaining) {
+  return remaining === 0 ? 'out' : `${remaining} 次`;
+}
+
 function formatStatus(players) {
   const defaultRows = DEFAULT_PLAYERS
     .filter((name) => players.has(name))
-    .map((name) => `${name}：${players.get(name)} 次`);
+    .map((name) => `${name}：${formatRemaining(players.get(name))}`);
   const additionalRows = [...players.entries()]
     .filter(([name]) => !DEFAULT_PLAYERS.includes(name))
     .sort(([left], [right]) => (left > right ? 1 : left < right ? -1 : 0))
-    .map(([name, remaining]) => `${name}：${remaining} 次`);
+    .map(([name, remaining]) => `${name}：${formatRemaining(remaining)}`);
   const rows = [...defaultRows, ...additionalRows];
 
   return ['🍄 今日剩餘', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
@@ -189,7 +193,7 @@ function formatUpdate(updates, players, { allPlayers = false, missingPlayers = [
   const lines = [
     allPlayers ? '🍄 已更新全部玩家' : '🍄 已更新',
     ...(allPlayers ? [] : ['', ...updates.map(({ name, previousRemaining, remaining }) => (
-      `${name}：${previousRemaining} → ${remaining}`
+      `${name}：${formatRemaining(previousRemaining)} → ${formatRemaining(remaining)}`
     ))]),
     '',
     '──────────',
@@ -328,7 +332,7 @@ async function handleEvent(event) {
       await reply(event.replyToken, formatPlayerNotFound(command.name));
       return;
     }
-    await reply(event.replyToken, `🍄 ${command.name}\n\n今日剩餘：${current} 次`);
+    await reply(event.replyToken, `🍄 ${command.name}\n\n今日剩餘：${formatRemaining(current)}`);
     return;
   }
 
