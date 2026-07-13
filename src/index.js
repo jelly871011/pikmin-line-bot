@@ -51,16 +51,20 @@ function resetAllGroups() {
 }
 
 function formatStatus(players) {
-  const rows = [...players.entries()]
-    .sort(([left], [right]) => left.localeCompare(right, 'zh-Hant'))
+  const defaultRows = DEFAULT_PLAYERS
+    .filter((name) => players.has(name))
+    .map((name) => `${name}：${players.get(name)} 次`);
+  const additionalRows = [...players.entries()]
+    .filter(([name]) => !DEFAULT_PLAYERS.includes(name))
     .map(([name, remaining]) => `${name}：${remaining} 次`);
+  const rows = [...defaultRows, ...additionalRows];
 
-  return ['🍄 今日剩餘次數', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
+  return ['🍄 今日剩餘', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
 }
 
 function formatPlayerList() {
   return [
-    '🍄 玩家名單',
+    '👥 玩家名單',
     '',
     ...DEFAULT_PLAYERS.map((name) => `• ${name}`),
     '',
@@ -93,6 +97,8 @@ function formatQuickHelp() {
 
 function formatHelp() {
   return [
+    '📖 使用說明',
+    '',
     '🍄 皮克敏打菇助手',
     '',
     '📋 查詢',
@@ -128,6 +134,62 @@ function formatHelp() {
     '• 每位玩家每天預設 3 次',
     '• 每天 00:00（Asia/Taipei）自動重置',
   ].join('\n');
+}
+
+function formatWelcome() {
+  return [
+    '🎉🍄 歡迎使用 Pikmin 打菇助手！',
+    '',
+    '目前玩家：',
+    '',
+    ...DEFAULT_PLAYERS.map((name) => `• ${name}`),
+    '',
+    '可使用：',
+    '',
+    '• 菇',
+    '快速查看指令',
+    '',
+    '• 菇 查詢',
+    '查看所有玩家',
+    '',
+    '• 菇 玩家',
+    '查看玩家名單',
+    '',
+    '• 菇 <玩家>',
+    '查詢單人',
+    '',
+    '• 菇 <玩家> -1',
+    '',
+    '• 菇 <玩家> +1',
+    '',
+    '• 菇 <玩家> 2',
+    '',
+    '每天凌晨 00:00',
+    '會自動重置為 3 次。',
+    '',
+    '祝大家今天都能打滿菇！🍄',
+  ].join('\n');
+}
+
+function formatUpdate(name, previousRemaining, remaining, players) {
+  const lines = [
+    '🍄 已更新',
+    '',
+    `${name}：${previousRemaining} → ${remaining} 次`,
+    '',
+    '──────────',
+    '',
+    formatStatus(players),
+  ];
+
+  if (remaining === 0) {
+    lines.push('', `⚠️ ${name}今天已沒有剩餘打菇次數！`);
+  }
+  if (remaining === MAX_ATTEMPTS) {
+    lines.push('', '✅ 已恢復至今日最大次數。');
+  }
+
+  return lines.join('\n');
 }
 
 function parseCommand(text) {
@@ -170,13 +232,27 @@ async function reply(replyToken, text) {
 }
 
 async function handleEvent(event) {
-  if (event.type !== 'message' || event.message.type !== 'text') return;
   if (event.source.type !== 'group' || !event.source.groupId) return;
+
+  const { groupId } = event.source;
+  if (event.type === 'join') {
+    if (!groups.has(groupId)) groups.set(groupId, createDefaultPlayers());
+    await reply(event.replyToken, formatWelcome());
+    return;
+  }
+
+  if (event.type === 'leave') {
+    groups.delete(groupId);
+    console.info(`Left group: ${groupId}`);
+    return;
+  }
+
+  if (event.type !== 'message' || event.message.type !== 'text') return;
 
   const command = parseCommand(event.message.text);
   if (!command) return;
 
-  const players = getPlayers(event.source.groupId);
+  const players = getPlayers(groupId);
   if (command.type === 'quick-help') {
     await reply(event.replyToken, formatQuickHelp());
     return;
@@ -225,7 +301,7 @@ async function handleEvent(event) {
 
   const remaining = command.type === 'set' ? command.value : current + command.value;
   players.set(command.name, remaining);
-  await reply(event.replyToken, `🍄 已更新\n\n${command.name}：${current} → ${remaining} 次`);
+  await reply(event.replyToken, formatUpdate(command.name, current, remaining, players));
 }
 
 app.get('/', (_req, res) => res.status(200).send('LINE bot is running.'));
