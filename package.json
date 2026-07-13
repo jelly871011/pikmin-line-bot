@@ -1,0 +1,21 @@
+{
+  "name": "pikmin-line-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LINE Messaging API Bot for tracking daily remaining attempts",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^9.8.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^4.0.7"
+  }
+}
