@@ -1,6 +1,6 @@
 {
   "name": "pikmin-line-bot",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "LINE Messaging API Bot for tracking daily remaining attempts",
   "type": "module",

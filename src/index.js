@@ -56,6 +56,7 @@ function formatStatus(players) {
     .map((name) => `${name}：${players.get(name)} 次`);
   const additionalRows = [...players.entries()]
     .filter(([name]) => !DEFAULT_PLAYERS.includes(name))
+    .sort(([left], [right]) => (left > right ? 1 : left < right ? -1 : 0))
     .map(([name, remaining]) => `${name}：${remaining} 次`);
   const rows = [...defaultRows, ...additionalRows];
 
@@ -123,6 +124,15 @@ function formatHelp() {
     '• 菇 <玩家名稱> <0~3>',
     '直接設定剩餘次數',
     '',
+    '• 菇 <玩家名稱> out',
+    '直接設定為 0 次',
+    '',
+    '• 菇 全部 <操作>',
+    '一次修改全部玩家',
+    '',
+    '• 菇 <玩家> <操作> <玩家> <操作>',
+    '一次修改多位玩家',
+    '',
     '例如：',
     '',
     '菇 小蓁 -1',
@@ -171,25 +181,58 @@ function formatWelcome() {
   ].join('\n');
 }
 
-function formatUpdate(name, previousRemaining, remaining, players) {
+function formatMissingPlayers(names) {
+  return ['⚠️ 找不到玩家：', '', ...names.map((name) => `• ${name}`)].join('\n');
+}
+
+function formatUpdate(updates, players, { allPlayers = false, missingPlayers = [] } = {}) {
   const lines = [
-    '🍄 已更新',
-    '',
-    `${name}：${previousRemaining} → ${remaining} 次`,
+    allPlayers ? '🍄 已更新全部玩家' : '🍄 已更新',
+    ...(allPlayers ? [] : ['', ...updates.map(({ name, previousRemaining, remaining }) => (
+      `${name}：${previousRemaining} → ${remaining}`
+    ))]),
     '',
     '──────────',
     '',
     formatStatus(players),
   ];
 
-  if (remaining === 0) {
-    lines.push('', `⚠️ ${name}今天已沒有剩餘打菇次數！`);
+  const zeroNames = updates
+    .filter(({ previousRemaining, remaining }) => previousRemaining !== 0 && remaining === 0)
+    .map(({ name }) => name);
+  if (zeroNames.length) {
+    lines.push('', '⚠️ 已沒有剩餘打菇次數：', '', ...zeroNames.map((name) => `• ${name}`));
   }
-  if (remaining === MAX_ATTEMPTS) {
-    lines.push('', '✅ 已恢復至今日最大次數。');
+
+  const maxNames = updates
+    .filter(({ previousRemaining, remaining }) => previousRemaining !== MAX_ATTEMPTS && remaining === MAX_ATTEMPTS)
+    .map(({ name }) => name);
+  if (maxNames.length) {
+    lines.push('', '✅ 已恢復今日最大次數：', '', ...maxNames.map((name) => `• ${name}`));
+  }
+
+  if (missingPlayers.length) {
+    lines.push('', formatMissingPlayers(missingPlayers));
   }
 
   return lines.join('\n');
+}
+
+function parseOperation(value) {
+  if (value.toLowerCase() === 'out') return { type: 'set', value: 0 };
+  if (value === '-1') return { type: 'change', value: -1 };
+  if (value === '+1') return { type: 'change', value: 1 };
+  if (/^-?\d+$/.test(value)) return { type: 'set', value: Number(value) };
+  return null;
+}
+
+function isValidOperation(operation) {
+  return operation.type !== 'set' || (operation.value >= 0 && operation.value <= MAX_ATTEMPTS);
+}
+
+function getRemainingAfterOperation(current, operation) {
+  if (operation.type === 'set') return operation.value;
+  return Math.max(0, Math.min(MAX_ATTEMPTS, current + operation.value));
 }
 
 function parseCommand(text) {
@@ -209,15 +252,21 @@ function parseCommand(text) {
   if (content === '查詢') return { type: 'query-all' };
   if (content === '玩家') return { type: 'player-list' };
 
-  const match = content.match(/^(.+?)\s+(-1|\+1|-?\d+)$/);
-  if (match) {
-    const name = match[1].trim();
-    if (!name) return { type: 'help' };
+  const tokens = content.split(/\s+/);
+  if (tokens.length >= 2 && tokens.length % 2 === 0) {
+    const updates = [];
+    for (let index = 0; index < tokens.length; index += 2) {
+      const operation = parseOperation(tokens[index + 1]);
+      if (!operation) break;
+      updates.push({ name: tokens[index], operation });
+    }
 
-    const operation = match[2];
-    if (operation === '-1') return { type: 'change', name, value: -1 };
-    if (operation === '+1') return { type: 'change', name, value: 1 };
-    return { type: 'set', name, value: Number(operation) };
+    if (updates.length === tokens.length / 2) {
+      if (updates.length === 1 && updates[0].name === '全部') {
+        return { type: 'update-all', operation: updates[0].operation };
+      }
+      return { type: updates.length === 1 ? 'update-one' : 'update-many', updates };
+    }
   }
 
   if (content) return { type: 'query-one', name: content };
@@ -273,35 +322,66 @@ async function handleEvent(event) {
     return;
   }
 
-  if (command.type === 'set' && (command.value < 0 || command.value > MAX_ATTEMPTS)) {
-    await reply(event.replyToken, '⚠️ 次數只能設定為 0～3。');
-    return;
-  }
-
-  const current = players.get(command.name);
-  if (current === undefined) {
-    await reply(event.replyToken, formatPlayerNotFound(command.name));
-    return;
-  }
-
   if (command.type === 'query-one') {
+    const current = players.get(command.name);
+    if (current === undefined) {
+      await reply(event.replyToken, formatPlayerNotFound(command.name));
+      return;
+    }
     await reply(event.replyToken, `🍄 ${command.name}\n\n今日剩餘：${current} 次`);
     return;
   }
 
-  if (command.type === 'change' && command.value === -1 && current === 0) {
-    await reply(event.replyToken, `⚠️ ${command.name}今天已沒有剩餘次數。`);
+  if (command.type === 'update-all') {
+    if (!isValidOperation(command.operation)) {
+      await reply(event.replyToken, '⚠️ 次數只能設定為 0～3。');
+      return;
+    }
+
+    const updates = [...players.entries()].map(([name, previousRemaining]) => {
+      const remaining = getRemainingAfterOperation(previousRemaining, command.operation);
+      players.set(name, remaining);
+      return { name, previousRemaining, remaining };
+    });
+    await reply(event.replyToken, formatUpdate(updates, players, { allPlayers: true }));
     return;
   }
 
-  if (command.type === 'change' && command.value === 1 && current === MAX_ATTEMPTS) {
-    await reply(event.replyToken, `⚠️ ${command.name}已是最大次數（${MAX_ATTEMPTS}）。`);
+  const invalidUpdate = command.updates.find(({ operation }) => !isValidOperation(operation));
+  if (invalidUpdate) {
+    await reply(event.replyToken, '⚠️ 次數只能設定為 0～3。');
     return;
   }
 
-  const remaining = command.type === 'set' ? command.value : current + command.value;
-  players.set(command.name, remaining);
-  await reply(event.replyToken, formatUpdate(command.name, current, remaining, players));
+  const missingPlayers = [];
+  const updates = [];
+  for (const { name, operation } of command.updates) {
+    const previousRemaining = players.get(name);
+    if (previousRemaining === undefined) {
+      missingPlayers.push(name);
+      continue;
+    }
+
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value === -1 && previousRemaining === 0) {
+      await reply(event.replyToken, `⚠️ ${name}今天已沒有剩餘次數。`);
+      return;
+    }
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value === 1 && previousRemaining === MAX_ATTEMPTS) {
+      await reply(event.replyToken, `⚠️ ${name}已是最大次數（${MAX_ATTEMPTS}）。`);
+      return;
+    }
+
+    const remaining = getRemainingAfterOperation(previousRemaining, operation);
+    players.set(name, remaining);
+    updates.push({ name, previousRemaining, remaining });
+  }
+
+  if (!updates.length && missingPlayers.length) {
+    await reply(event.replyToken, formatMissingPlayers(missingPlayers));
+    return;
+  }
+
+  await reply(event.replyToken, formatUpdate(updates, players, { missingPlayers }));
 }
 
 app.get('/', (_req, res) => res.status(200).send('LINE bot is running.'));
