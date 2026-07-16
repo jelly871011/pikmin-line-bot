@@ -12,7 +12,6 @@ import {
   updatePower,
   resetRemaining,
   createPlayers,
-  getRanking,
 } from './services/playerService.js';
 
 const { LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET } = process.env;
@@ -92,16 +91,18 @@ function formatPowerUpdate(name, previousPower, power) {
   return ['⚔️ 已更新戰力', '', `${name}：`, '', `${previousPower} → ${power}`].join('\n');
 }
 
-function formatRanking(players) {
-  const medals = ['🥇', '🥈', '🥉', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
-  const rows = players.flatMap((player, index) => [
-    `${medals[index] ?? `${index + 1}.`} ${player.player_name}`,
+function formatPowerSum(players) {
+  const total = players.reduce((sum, player) => sum + player.power, 0);
+  const rows = players.map((player) => `${player.player_name}：${player.power}`);
+  return [
+    '🧮 戰力合計',
     '',
-    `${player.power}`,
+    ...rows,
     '',
-  ]);
-  if (rows.length) rows.pop();
-  return ['🏆 戰力排行榜', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
+    '──────────',
+    '',
+    `總戰力：${total}`,
+  ].join('\n');
 }
 
 function formatQuickHelp() {
@@ -165,19 +166,22 @@ function formatHelp() {
     '菇 小蓁 -1',
     '菇 jun 2',
     '',
-    '⚔️ 戰力',
+    '⚔️ 戰力（不需「菇」前綴）',
     '',
-    '• 菇 戰力',
+    '• 戰力',
     '查看所有玩家戰力',
     '',
-    '• 菇 戰力 <玩家名稱>',
+    '• 戰力 <玩家名稱>',
     '查看指定玩家戰力',
     '',
-    '• 菇 戰力 <玩家名稱> <數值>',
+    '• 戰力 <玩家名稱> <數值>',
     '設定玩家戰力',
     '',
-    '• 菇 排名',
-    '查看戰力排行榜',
+    '• 戰力合計',
+    '加總所有玩家戰力',
+    '',
+    '• 戰力合計 <玩家> <玩家> ...',
+    '加總指定玩家戰力',
     '',
     '• 菇 玩家 <玩家名稱>',
     '查看玩家資訊',
@@ -218,19 +222,22 @@ function formatWelcome() {
     '',
     '• 菇 <玩家> 2',
     '',
-    '⚔️ 戰力功能：',
+    '⚔️ 戰力功能（不需「菇」）：',
     '',
-    '• 菇 戰力',
+    '• 戰力',
     '查看所有玩家戰力',
     '',
-    '• 菇 戰力 <玩家>',
+    '• 戰力 <玩家>',
     '查詢單人戰力',
     '',
-    '• 菇 戰力 <玩家> <數值>',
+    '• 戰力 <玩家> <數值>',
     '設定戰力',
     '',
-    '• 菇 排名',
-    '戰力排行榜',
+    '• 戰力合計',
+    '加總所有玩家戰力',
+    '',
+    '• 戰力合計 <玩家> <玩家>',
+    '加總指定玩家戰力',
     '',
     '每天凌晨 00:00',
     '會自動重置為 3 次。',
@@ -296,14 +303,31 @@ function getRemainingAfterOperation(current, operation) {
 
 function parseCommand(text) {
   const trimmed = text.trim();
+
+  // Power commands intentionally have no 菇 prefix.
+  // 戰力合計 must be checked before the 戰力 branches below.
+  if (trimmed === '戰力合計') return { type: 'power-sum', names: [] };
+  if (/^戰力合計 +/.test(trimmed)) {
+    const names = trimmed.replace(/^戰力合計 +/, '').trim().split(/\s+/);
+    return { type: 'power-sum', names };
+  }
+
+  if (trimmed === '戰力') return { type: 'power-all' };
+  if (/^戰力 +/.test(trimmed)) {
+    const powerTokens = trimmed.replace(/^戰力 +/, '').trim().split(/\s+/);
+    if (powerTokens.length === 1) return { type: 'power-one', name: powerTokens[0] };
+    if (powerTokens.length === 2 && /^\d+$/.test(powerTokens[1])) {
+      return { type: 'power-set', name: powerTokens[0], power: Number(powerTokens[1]) };
+    }
+    return null;
+  }
+
   if (trimmed === '菇') return { type: 'quick-help' };
 
   const compactCommands = new Map([
     ['菇查詢', 'query-all'],
     ['菇玩家', 'player-list'],
     ['菇幫助', 'help'],
-    ['菇戰力', 'power-all'],
-    ['菇排名', 'ranking'],
   ]);
   if (compactCommands.has(trimmed)) return { type: compactCommands.get(trimmed) };
 
@@ -312,17 +336,8 @@ function parseCommand(text) {
   if (content === '幫助') return { type: 'help' };
   if (content === '查詢') return { type: 'query-all' };
   if (content === '玩家') return { type: 'player-list' };
-  if (content === '戰力') return { type: 'power-all' };
-  if (content === '排名') return { type: 'ranking' };
 
   const tokens = content.split(/\s+/);
-
-  if (tokens[0] === '戰力') {
-    if (tokens.length === 2) return { type: 'power-one', name: tokens[1] };
-    if (tokens.length === 3 && /^\d+$/.test(tokens[2])) {
-      return { type: 'power-set', name: tokens[1], power: Number(tokens[2]) };
-    }
-  }
 
   if (tokens[0] === '玩家' && tokens.length === 2) {
     return { type: 'player-info', name: tokens[1] };
@@ -393,9 +408,28 @@ async function handleCommand(groupId, command, replyToken) {
     return;
   }
 
-  if (command.type === 'ranking') {
-    const players = await getRanking(groupId);
-    await reply(replyToken, formatRanking(players));
+  if (command.type === 'power-sum') {
+    const players = await getPlayers(groupId);
+    if (command.names.length === 0) {
+      await reply(replyToken, formatPowerSum(players));
+      return;
+    }
+    const byName = new Map(players.map((player) => [player.player_name, player]));
+    const selected = [];
+    const missingPlayers = [];
+    for (const name of command.names) {
+      const player = byName.get(name);
+      if (player) selected.push(player);
+      else missingPlayers.push(name);
+    }
+    if (!selected.length) {
+      await reply(replyToken, formatMissingPlayers(missingPlayers));
+      return;
+    }
+    const text = missingPlayers.length
+      ? `${formatPowerSum(selected)}\n\n${formatMissingPlayers(missingPlayers)}`
+      : formatPowerSum(selected);
+    await reply(replyToken, text);
     return;
   }
 

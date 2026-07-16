@@ -84,17 +84,6 @@ async function createPlayers(groupId) {
   if (error) fail('createPlayers', error);
 }
 
-async function getRanking(groupId) {
-  const { data, error } = await supabase
-    .from('players')
-    .select('player_name, remaining, power')
-    .eq('group_id', groupId)
-    .order('power', { ascending: false });
-  if (error) fail('getRanking', error);
-
-  return data ?? [];
-}
-
 function sortPlayers(rows) {
   const defaults = DEFAULT_PLAYERS
     .map((name) => rows.find((row) => row.player_name === name))
@@ -115,5 +104,4 @@ export {
   updatePower,
   resetRemaining,
   createPlayers,
-  getRanking,
 };
