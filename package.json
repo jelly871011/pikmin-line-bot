@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@line/bot-sdk": "^9.8.0",
+    "@supabase/supabase-js": "^2.109.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "node-cron": "^4.0.7"
+    "node-cron": "^4.0.7",
+    "ws": "^8.21.1"
   }
 }

@@ -1,8 +1,15 @@
 # Pikmin LINE Bot
 
-一個可部署到 Render 的 LINE Messaging API Bot。它會依 LINE 群組分開記錄固定玩家名單的當日剩餘次數；資料存放於記憶體 `Map`，每天台灣時間凌晨重設為 3 次，也會在服務重新啟動後重設。
+一個可部署到 Render 的 LINE Messaging API Bot。它會依 LINE 群組分開記錄固定玩家名單的當日剩餘次數與戰力；資料存放於 Supabase（PostgreSQL），永久保存，每天台灣時間凌晨自動將剩餘次數重設為 3 次。
 
 ## Changelog
+
+### v1.2.0
+
+- 資料改存 Supabase（PostgreSQL），永久保存，服務重啟不再遺失。
+- 新增戰力功能：`菇 戰力`、`菇 戰力 <玩家>`、`菇 戰力 <玩家> <數值>`。
+- 新增戰力排行榜：`菇 排名`。
+- 新增玩家資訊：`菇 玩家 <玩家>`。
 
 ### v1.1.0
 
@@ -29,6 +36,11 @@
 | `菇 小蓁` | 查詢小蓁的剩餘次數 |
 | `菇 查詢` | 依固定玩家順序，列出該群組所有玩家的剩餘次數 |
 | `菇 玩家` | 顯示固定玩家名單 |
+| `菇 玩家 小蓁` | 顯示小蓁的玩家資訊（戰力與今日剩餘） |
+| `菇 戰力` | 依固定玩家順序列出所有玩家戰力 |
+| `菇 戰力 小蓁` | 查詢小蓁的戰力與今日剩餘 |
+| `菇 戰力 小蓁 12000` | 將小蓁的戰力設為 12000 |
+| `菇 排名` | 依戰力由高到低顯示排行榜 |
 | `菇 幫助` | 顯示指令說明 |
 | `菇` | 顯示簡短指令提示 |
 
@@ -120,19 +132,81 @@ jun：1 次
 • jun
 ```
 
+> 菇 戰力
+
+```text
+⚔️ 玩家戰力
+
+小蓁：10543
+牙齒：9800
+肌膚：14900
+青青：9800
+jun：15200
+```
+
+> 菇 戰力 小蓁 12000
+
+```text
+⚔️ 已更新戰力
+
+小蓁：
+
+10543 → 12000
+```
+
+> 菇 排名
+
+```text
+🏆 戰力排行榜
+
+🥇 jun
+
+15200
+
+🥈 肌膚
+
+14900
+
+🥉 牙齒
+
+13000
+
+④ 小蓁
+
+12000
+
+⑤ 青青
+
+9800
+```
+
+> 菇 玩家 小蓁
+
+```text
+👤 小蓁
+
+⚔️ 戰力：
+
+12000
+
+🍄 今日剩餘：
+
+2 次
+```
+
 ## 加入群組
 
 Bot 加入群組時：
 
-- 自動建立該群組的預設玩家資料。
+- 自動在 Supabase 建立該群組的預設玩家資料（若尚未存在）。
 - 自動發送歡迎訊息與快速指令說明。
-- 若群組已有資料，既有剩餘次數不會被覆蓋。
+- 若群組已有資料，既有剩餘次數與戰力不會被覆蓋。
 
 ## 離開群組
 
 Bot 離開群組時：
 
-- 自動清除該群組的記憶體資料。
+- 保留該群組在 Supabase 的資料（永久保存）。
 - 不會傳送任何離開回覆。
 
 ## 更新提示
@@ -158,7 +232,7 @@ Bot 離開群組時：
    cp .env.example .env
    ```
 
-4. 在 `.env` 填入 LINE Channel access token 與 Channel secret。
+4. 在 `.env` 填入 LINE Channel access token、Channel secret，以及 Supabase 的 `SUPABASE_URL` 與 `SUPABASE_ANON_KEY`（見下方「Supabase 設定」）。
 5. 啟動：
 
    ```bash
@@ -175,6 +249,36 @@ Bot 離開群組時：
 4. 在 Messaging API 設定中關閉 Auto-reply messages 與 Greeting messages（避免與 Bot 回覆混淆）。
 5. 將 Bot 加入目標群組；必要時在 Messaging API 設定允許加入群組。
 
+## Supabase 設定
+
+Bot 的資料儲存在 Supabase（PostgreSQL）。部署前請先建立專案與資料表。
+
+1. 到 [Supabase](https://supabase.com/) 註冊並建立一個新的 **Project**。
+2. 在專案的 **SQL Editor**，貼上並執行 [`supabase/schema.sql`](supabase/schema.sql)，建立 `players` 資料表：
+
+   ```sql
+   create extension if not exists "pgcrypto";
+
+   create table if not exists players (
+     id uuid primary key default gen_random_uuid(),
+     group_id text not null,
+     player_name text not null,
+     remaining integer not null default 3,
+     power integer not null default 0,
+     updated_at timestamptz not null default now(),
+     unique (group_id, player_name)
+   );
+
+   create index if not exists players_group_id_idx on players (group_id);
+   ```
+
+3. 到專案的 **Settings → API**，取得兩個值：
+
+   - **Project URL** → 對應環境變數 `SUPABASE_URL`
+   - **anon public** API key → 對應環境變數 `SUPABASE_ANON_KEY`
+
+4. 這兩個值分別填入本機 `.env` 與 Render 的 Environment Variables，**請勿寫入程式或提交到 repository**。
+
 ## Render 部署
 
 1. 將專案 Push 到 GitHub。
@@ -189,6 +293,8 @@ Bot 離開群組時：
 
    - `LINE_CHANNEL_ACCESS_TOKEN`
    - `LINE_CHANNEL_SECRET`
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
 
    由你自行在 Render Dashboard 填入值；不要將任何值寫入 repository、`render.yaml` 或 README。
 
@@ -221,7 +327,7 @@ Bot 離開群組時：
 
 ## 注意事項
 
-- 資料只存在記憶體，不使用資料庫；Render 重啟、重新部署或 free instance 休眠後都會遺失資料。
-- 每日 `00:00`（`Asia/Taipei`）會將所有固定玩家重設為 3 次。
+- 資料儲存在 Supabase（PostgreSQL），永久保存；Render 重啟、重新部署或 free instance 休眠後都不會遺失。
+- 每日 `00:00`（`Asia/Taipei`）會將所有玩家的剩餘次數重設為 3 次（不影響戰力）。
 - Webhook 簽章由 `@line/bot-sdk` middleware 驗證；請勿將 Channel secret 放進前端或提交 `.env`。
 - Render 免費方案可能因閒置而休眠；第一次收到 LINE 訊息時，Bot 可能需要數秒喚醒，喚醒完成後即可正常使用。

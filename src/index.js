@@ -2,17 +2,21 @@ import 'dotenv/config';
 import express from 'express';
 import cron from 'node-cron';
 import { middleware, messagingApi } from '@line/bot-sdk';
+import {
+  MAX_ATTEMPTS,
+  DEFAULT_PLAYERS,
+  PlayerServiceError,
+  getPlayers,
+  getPlayer,
+  updateRemaining,
+  updatePower,
+  resetRemaining,
+  createPlayers,
+  getRanking,
+} from './services/playerService.js';
 
 const { LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET } = process.env;
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
-const MAX_ATTEMPTS = 3;
-const DEFAULT_PLAYERS = [
-  '小蓁',
-  '牙齒',
-  '肌膚',
-  '青青',
-  'jun',
-];
 
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
   console.error('Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_SECRET.');
@@ -24,46 +28,17 @@ const lineClient = new messagingApi.MessagingApiClient({
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
 });
 
-// groupId -> (player name -> remaining attempts). Data is deliberately in memory.
-const groups = new Map();
-
-function createDefaultPlayers() {
-  return new Map(DEFAULT_PLAYERS.map((name) => [name, MAX_ATTEMPTS]));
-}
-
-function getPlayers(groupId) {
-  let players = groups.get(groupId);
-  if (!players) {
-    players = createDefaultPlayers();
-    groups.set(groupId, players);
-  }
-  return players;
-}
-
 function formatPlayerNotFound(name) {
   return `⚠️ 找不到玩家：${name}\n\n請輸入：\n\n菇 玩家\n\n查看玩家名單。`;
-}
-
-function resetAllGroups() {
-  for (const groupId of groups.keys()) {
-    groups.set(groupId, createDefaultPlayers());
-  }
 }
 
 function formatRemaining(remaining) {
   return remaining === 0 ? 'out' : `${remaining} 次`;
 }
 
+// `players` is an ordered array of rows: { player_name, remaining, power }.
 function formatStatus(players) {
-  const defaultRows = DEFAULT_PLAYERS
-    .filter((name) => players.has(name))
-    .map((name) => `${name}：${formatRemaining(players.get(name))}`);
-  const additionalRows = [...players.entries()]
-    .filter(([name]) => !DEFAULT_PLAYERS.includes(name))
-    .sort(([left], [right]) => (left > right ? 1 : left < right ? -1 : 0))
-    .map(([name, remaining]) => `${name}：${formatRemaining(remaining)}`);
-  const rows = [...defaultRows, ...additionalRows];
-
+  const rows = players.map((player) => `${player.player_name}：${formatRemaining(player.remaining)}`);
   return ['🍄 今日剩餘', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
 }
 
@@ -82,6 +57,51 @@ function formatPlayerList() {
     '',
     '菇 小蓁',
   ].join('\n');
+}
+
+function formatPlayerInfo(player) {
+  return [
+    `👤 ${player.player_name}`,
+    '',
+    '⚔️ 戰力：',
+    '',
+    `${player.power}`,
+    '',
+    '🍄 今日剩餘：',
+    '',
+    formatRemaining(player.remaining),
+  ].join('\n');
+}
+
+function formatPowerAll(players) {
+  const rows = players.map((player) => `${player.player_name}：${player.power}`);
+  return ['⚔️ 玩家戰力', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
+}
+
+function formatPowerOne(player) {
+  return [
+    `👤 ${player.player_name}`,
+    '',
+    `⚔️ 戰力：${player.power}`,
+    '',
+    `🍄 今日剩餘：${formatRemaining(player.remaining)}`,
+  ].join('\n');
+}
+
+function formatPowerUpdate(name, previousPower, power) {
+  return ['⚔️ 已更新戰力', '', `${name}：`, '', `${previousPower} → ${power}`].join('\n');
+}
+
+function formatRanking(players) {
+  const medals = ['🥇', '🥈', '🥉', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+  const rows = players.flatMap((player, index) => [
+    `${medals[index] ?? `${index + 1}.`} ${player.player_name}`,
+    '',
+    `${player.power}`,
+    '',
+  ]);
+  if (rows.length) rows.pop();
+  return ['🏆 戰力排行榜', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
 }
 
 function formatQuickHelp() {
@@ -141,6 +161,23 @@ function formatHelp() {
     '',
     '菇 小蓁 -1',
     '菇 jun 2',
+    '',
+    '⚔️ 戰力',
+    '',
+    '• 菇 戰力',
+    '查看所有玩家戰力',
+    '',
+    '• 菇 戰力 <玩家名稱>',
+    '查看指定玩家戰力',
+    '',
+    '• 菇 戰力 <玩家名稱> <數值>',
+    '設定玩家戰力',
+    '',
+    '• 菇 排名',
+    '查看戰力排行榜',
+    '',
+    '• 菇 玩家 <玩家名稱>',
+    '查看玩家資訊',
     '',
     'ℹ️ 說明',
     '',
@@ -247,6 +284,8 @@ function parseCommand(text) {
     ['菇查詢', 'query-all'],
     ['菇玩家', 'player-list'],
     ['菇幫助', 'help'],
+    ['菇戰力', 'power-all'],
+    ['菇排名', 'ranking'],
   ]);
   if (compactCommands.has(trimmed)) return { type: compactCommands.get(trimmed) };
 
@@ -255,8 +294,22 @@ function parseCommand(text) {
   if (content === '幫助') return { type: 'help' };
   if (content === '查詢') return { type: 'query-all' };
   if (content === '玩家') return { type: 'player-list' };
+  if (content === '戰力') return { type: 'power-all' };
+  if (content === '排名') return { type: 'ranking' };
 
   const tokens = content.split(/\s+/);
+
+  if (tokens[0] === '戰力') {
+    if (tokens.length === 2) return { type: 'power-one', name: tokens[1] };
+    if (tokens.length === 3 && /^\d+$/.test(tokens[2])) {
+      return { type: 'power-set', name: tokens[1], power: Number(tokens[2]) };
+    }
+  }
+
+  if (tokens[0] === '玩家' && tokens.length === 2) {
+    return { type: 'player-info', name: tokens[1] };
+  }
+
   if (tokens.length >= 2 && tokens.length % 2 === 0) {
     const updates = [];
     for (let index = 0; index < tokens.length; index += 2) {
@@ -284,18 +337,153 @@ async function reply(replyToken, text) {
   });
 }
 
+async function handleCommand(groupId, command, replyToken) {
+  if (command.type === 'quick-help') {
+    await reply(replyToken, formatQuickHelp());
+    return;
+  }
+
+  if (command.type === 'help') {
+    await reply(replyToken, formatHelp());
+    return;
+  }
+
+  if (command.type === 'query-all') {
+    const players = await getPlayers(groupId);
+    await reply(replyToken, formatStatus(players));
+    return;
+  }
+
+  if (command.type === 'player-list') {
+    await reply(replyToken, formatPlayerList());
+    return;
+  }
+
+  if (command.type === 'player-info') {
+    const player = await getPlayer(groupId, command.name);
+    if (!player) {
+      await reply(replyToken, formatPlayerNotFound(command.name));
+      return;
+    }
+    await reply(replyToken, formatPlayerInfo(player));
+    return;
+  }
+
+  if (command.type === 'power-all') {
+    const players = await getPlayers(groupId);
+    await reply(replyToken, formatPowerAll(players));
+    return;
+  }
+
+  if (command.type === 'ranking') {
+    const players = await getRanking(groupId);
+    await reply(replyToken, formatRanking(players));
+    return;
+  }
+
+  if (command.type === 'power-one') {
+    const player = await getPlayer(groupId, command.name);
+    if (!player) {
+      await reply(replyToken, formatPlayerNotFound(command.name));
+      return;
+    }
+    await reply(replyToken, formatPowerOne(player));
+    return;
+  }
+
+  if (command.type === 'power-set') {
+    const player = await getPlayer(groupId, command.name);
+    if (!player) {
+      await reply(replyToken, formatPlayerNotFound(command.name));
+      return;
+    }
+    const previousPower = player.power;
+    await updatePower(groupId, command.name, command.power);
+    await reply(replyToken, formatPowerUpdate(command.name, previousPower, command.power));
+    return;
+  }
+
+  if (command.type === 'query-one') {
+    const player = await getPlayer(groupId, command.name);
+    if (!player) {
+      await reply(replyToken, formatPlayerNotFound(command.name));
+      return;
+    }
+    await reply(replyToken, `🍄 ${command.name}\n\n今日剩餘：${formatRemaining(player.remaining)}`);
+    return;
+  }
+
+  if (command.type === 'update-all') {
+    if (!isValidOperation(command.operation)) {
+      await reply(replyToken, '⚠️ 次數只能設定為 0～3。');
+      return;
+    }
+
+    const players = await getPlayers(groupId);
+    const updates = [];
+    for (const player of players) {
+      const previousRemaining = player.remaining;
+      const remaining = getRemainingAfterOperation(previousRemaining, command.operation);
+      if (remaining !== previousRemaining) await updateRemaining(groupId, player.player_name, remaining);
+      player.remaining = remaining;
+      updates.push({ name: player.player_name, previousRemaining, remaining });
+    }
+    await reply(replyToken, formatUpdate(updates, players, { allPlayers: true }));
+    return;
+  }
+
+  const invalidUpdate = command.updates.find(({ operation }) => !isValidOperation(operation));
+  if (invalidUpdate) {
+    await reply(replyToken, '⚠️ 次數只能設定為 0～3。');
+    return;
+  }
+
+  const players = await getPlayers(groupId);
+  const byName = new Map(players.map((player) => [player.player_name, player]));
+  const missingPlayers = [];
+  const updates = [];
+  for (const { name, operation } of command.updates) {
+    const player = byName.get(name);
+    if (!player) {
+      missingPlayers.push(name);
+      continue;
+    }
+    const previousRemaining = player.remaining;
+
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value === -1 && previousRemaining === 0) {
+      await reply(replyToken, `⚠️ ${name}今天已沒有剩餘次數。`);
+      return;
+    }
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value === 1 && previousRemaining === MAX_ATTEMPTS) {
+      await reply(replyToken, `⚠️ ${name}已是最大次數（${MAX_ATTEMPTS}）。`);
+      return;
+    }
+
+    const remaining = getRemainingAfterOperation(previousRemaining, operation);
+    if (remaining !== previousRemaining) await updateRemaining(groupId, name, remaining);
+    player.remaining = remaining;
+    updates.push({ name, previousRemaining, remaining });
+  }
+
+  if (!updates.length && missingPlayers.length) {
+    await reply(replyToken, formatMissingPlayers(missingPlayers));
+    return;
+  }
+
+  await reply(replyToken, formatUpdate(updates, players, { missingPlayers }));
+}
+
 async function handleEvent(event) {
   if (event.source.type !== 'group' || !event.source.groupId) return;
 
   const { groupId } = event.source;
   if (event.type === 'join') {
-    if (!groups.has(groupId)) groups.set(groupId, createDefaultPlayers());
+    await createPlayers(groupId);
     await reply(event.replyToken, formatWelcome());
     return;
   }
 
   if (event.type === 'leave') {
-    groups.delete(groupId);
     console.info(`Left group: ${groupId}`);
     return;
   }
@@ -305,87 +493,15 @@ async function handleEvent(event) {
   const command = parseCommand(event.message.text);
   if (!command) return;
 
-  const players = getPlayers(groupId);
-  if (command.type === 'quick-help') {
-    await reply(event.replyToken, formatQuickHelp());
-    return;
-  }
-
-  if (command.type === 'help') {
-    await reply(event.replyToken, formatHelp());
-    return;
-  }
-
-  if (command.type === 'query-all') {
-    await reply(event.replyToken, formatStatus(players));
-    return;
-  }
-
-  if (command.type === 'player-list') {
-    await reply(event.replyToken, formatPlayerList());
-    return;
-  }
-
-  if (command.type === 'query-one') {
-    const current = players.get(command.name);
-    if (current === undefined) {
-      await reply(event.replyToken, formatPlayerNotFound(command.name));
+  try {
+    await handleCommand(groupId, command, event.replyToken);
+  } catch (error) {
+    if (error instanceof PlayerServiceError) {
+      await reply(event.replyToken, '⚠️ 發生錯誤，請稍後再試。');
       return;
     }
-    await reply(event.replyToken, `🍄 ${command.name}\n\n今日剩餘：${formatRemaining(current)}`);
-    return;
+    throw error;
   }
-
-  if (command.type === 'update-all') {
-    if (!isValidOperation(command.operation)) {
-      await reply(event.replyToken, '⚠️ 次數只能設定為 0～3。');
-      return;
-    }
-
-    const updates = [...players.entries()].map(([name, previousRemaining]) => {
-      const remaining = getRemainingAfterOperation(previousRemaining, command.operation);
-      players.set(name, remaining);
-      return { name, previousRemaining, remaining };
-    });
-    await reply(event.replyToken, formatUpdate(updates, players, { allPlayers: true }));
-    return;
-  }
-
-  const invalidUpdate = command.updates.find(({ operation }) => !isValidOperation(operation));
-  if (invalidUpdate) {
-    await reply(event.replyToken, '⚠️ 次數只能設定為 0～3。');
-    return;
-  }
-
-  const missingPlayers = [];
-  const updates = [];
-  for (const { name, operation } of command.updates) {
-    const previousRemaining = players.get(name);
-    if (previousRemaining === undefined) {
-      missingPlayers.push(name);
-      continue;
-    }
-
-    if (command.type === 'update-one' && operation.type === 'change' && operation.value === -1 && previousRemaining === 0) {
-      await reply(event.replyToken, `⚠️ ${name}今天已沒有剩餘次數。`);
-      return;
-    }
-    if (command.type === 'update-one' && operation.type === 'change' && operation.value === 1 && previousRemaining === MAX_ATTEMPTS) {
-      await reply(event.replyToken, `⚠️ ${name}已是最大次數（${MAX_ATTEMPTS}）。`);
-      return;
-    }
-
-    const remaining = getRemainingAfterOperation(previousRemaining, operation);
-    players.set(name, remaining);
-    updates.push({ name, previousRemaining, remaining });
-  }
-
-  if (!updates.length && missingPlayers.length) {
-    await reply(event.replyToken, formatMissingPlayers(missingPlayers));
-    return;
-  }
-
-  await reply(event.replyToken, formatUpdate(updates, players, { missingPlayers }));
 }
 
 app.get('/', (_req, res) => res.status(200).send('LINE bot is running.'));
@@ -407,9 +523,13 @@ app.use((error, _req, res, _next) => {
 });
 
 // node-cron uses IANA time zones, so this always runs at Taiwan midnight.
-cron.schedule('0 0 * * *', () => {
-  resetAllGroups();
-  console.info('Daily player data reset to defaults.');
+cron.schedule('0 0 * * *', async () => {
+  try {
+    await resetRemaining();
+    console.info('Daily player data reset to defaults.');
+  } catch (error) {
+    console.error('Daily reset failed:', error);
+  }
 }, { timezone: 'Asia/Taipei' });
 
 app.listen(PORT, () => {
