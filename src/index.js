@@ -473,6 +473,11 @@ async function handleCommand(groupId, command, replyToken) {
   await reply(replyToken, formatUpdate(updates, players, { missingPlayers }));
 }
 
+async function ensurePlayers(groupId) {
+  const players = await getPlayers(groupId);
+  if (players.length === 0) await createPlayers(groupId);
+}
+
 async function handleEvent(event) {
   if (event.source.type !== 'group' || !event.source.groupId) return;
 
@@ -494,6 +499,10 @@ async function handleEvent(event) {
   if (!command) return;
 
   try {
+    // Self-heal: groups that were added before this deploy (or whose initial
+    // seeding failed) have no rows yet, so ensure the default roster exists
+    // before handling any command. createPlayers is an idempotent upsert.
+    await ensurePlayers(groupId);
     await handleCommand(groupId, command, event.replyToken);
   } catch (error) {
     if (error instanceof PlayerServiceError) {
