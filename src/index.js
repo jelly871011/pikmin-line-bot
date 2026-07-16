@@ -145,6 +145,9 @@ function formatHelp() {
     '• 菇 <玩家名稱> +1',
     '增加一次（最高 3）',
     '',
+    '• 菇 <玩家名稱> -2 / +2',
+    '一次加減多次（自動夾在 0～3）',
+    '',
     '• 菇 <玩家名稱> <0~3>',
     '直接設定剩餘次數',
     '',
@@ -261,9 +264,10 @@ function formatUpdate(updates, players, { allPlayers = false, missingPlayers = [
 
 function parseOperation(value) {
   if (value.toLowerCase() === 'out') return { type: 'set', value: 0 };
-  if (value === '-1') return { type: 'change', value: -1 };
-  if (value === '+1') return { type: 'change', value: 1 };
-  if (/^-?\d+$/.test(value)) return { type: 'set', value: Number(value) };
+  // A leading + or - means relative (e.g. -2 subtracts 2, +3 adds 3); the
+  // result is clamped to 0～MAX_ATTEMPTS later. A bare number sets directly.
+  if (/^[+-]\d+$/.test(value)) return { type: 'change', value: Number(value) };
+  if (/^\d+$/.test(value)) return { type: 'set', value: Number(value) };
   return null;
 }
 
@@ -450,11 +454,11 @@ async function handleCommand(groupId, command, replyToken) {
     }
     const previousRemaining = player.remaining;
 
-    if (command.type === 'update-one' && operation.type === 'change' && operation.value === -1 && previousRemaining === 0) {
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value < 0 && previousRemaining === 0) {
       await reply(replyToken, `⚠️ ${name}今天已沒有剩餘次數。`);
       return;
     }
-    if (command.type === 'update-one' && operation.type === 'change' && operation.value === 1 && previousRemaining === MAX_ATTEMPTS) {
+    if (command.type === 'update-one' && operation.type === 'change' && operation.value > 0 && previousRemaining === MAX_ATTEMPTS) {
       await reply(replyToken, `⚠️ ${name}已是最大次數（${MAX_ATTEMPTS}）。`);
       return;
     }
