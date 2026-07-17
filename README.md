@@ -4,6 +4,13 @@
 
 ## Changelog
 
+### v1.4.1
+
+- 指令改為設定驅動：所有指令集中於 `src/constants/commands.js`，Help、`全部指令`、指令推薦共用同一份清單，不再重複維護。
+- 新增系統指令（無前綴，直接輸入）：`全部指令`、`資訊`、`版本`、`更新紀錄`、`幫助`。
+- 新增 Smart Help／指令推薦：輸入以 `菇`／`戰力`／`課長` 開頭但指令打錯時，會回覆最接近的指令建議；不相關訊息仍會被忽略。
+- 回覆訊息集中由 `src/utils/messageBuilder.js` 產生；說明文案與更新紀錄集中於 `src/constants/helpMessages.js`；推薦邏輯集中於 `src/utils/commandSuggestion.js`。
+
 ### v1.4.0
 
 - 新增課長排行榜系統。
@@ -133,6 +140,22 @@ Kevin
 - 新增未填級分時預設為 `ㄦ`；重複新增會提示「⚠️ 阿明 已經在課長名單中。」。
 - 批次修改/刪除時找不到的名稱會略過，並在最後提示「⚠️ 找不到課長：」。
 - 輸入不存在的級分（例如 `ㄉ`、`A`、`S`）會回覆「⚠️ 級分只能是：ㄅ、ㄆ、ㄇ、ㄈ、ㄦ」。
+
+### 系統指令（v1.4.1）
+
+無前綴，直接輸入：
+
+| 訊息 | 結果 |
+| --- | --- |
+| `幫助` | 顯示完整使用說明 |
+| `全部指令` | 列出所有指令家族（由設定自動產生） |
+| `資訊` | 顯示 Bot 資訊與版本 |
+| `版本` | 顯示目前版本 |
+| `更新紀錄` | 顯示各版本更新紀錄 |
+
+輸入以 `菇`／`戰力`／`課長` 開頭但指令打錯時，Bot 會回覆最接近的指令建議（Smart Help）；不相關的一般訊息仍會被忽略。
+
+指令清單集中於 [`src/constants/commands.js`](src/constants/commands.js)，說明文案集中於 [`src/constants/helpMessages.js`](src/constants/helpMessages.js)，回覆由 [`src/utils/messageBuilder.js`](src/utils/messageBuilder.js) 產生，推薦邏輯位於 [`src/utils/commandSuggestion.js`](src/utils/commandSuggestion.js)。
 
 ## 使用範例
 

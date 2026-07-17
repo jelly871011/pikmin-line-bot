@@ -23,6 +23,18 @@ import {
   deleteWhale,
 } from './services/whaleService.js';
 import { registerJobs } from './jobs/index.js';
+import { SYSTEM_COMMANDS } from './constants/commands.js';
+import {
+  buildHelp,
+  buildQuickHelp,
+  buildAllCommands,
+  buildAbout,
+  buildVersion,
+  buildUpdateLog,
+  buildWhaleHelp,
+  buildCommandSuggestion,
+} from './utils/messageBuilder.js';
+import { matchedPrefix, suggestCommands } from './utils/commandSuggestion.js';
 
 const { LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET } = process.env;
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -315,166 +327,15 @@ function formatWhaleDeleted(deletedNames, missingNames = []) {
 }
 
 function formatWhaleHelp() {
-  return [
-    '💎 課長系統',
-    '',
-    '📋 查詢',
-    '',
-    '課長',
-    '課長 阿明',
-    '課長 統計',
-    '',
-    '──────────',
-    '',
-    '➕ 新增',
-    '',
-    '課長 新增 阿明',
-    '課長 新增 阿明 ㄅ',
-    '',
-    '──────────',
-    '',
-    '✏️ 修改',
-    '',
-    '課長 阿明 ㄆ',
-    '',
-    '──────────',
-    '',
-    '🗑️ 刪除',
-    '',
-    '課長 刪除 阿明',
-    '',
-    '──────────',
-    '',
-    '📦 批次',
-    '',
-    '課長 新增',
-    '阿明 ㄅ',
-    '小華 ㄆ',
-    '',
-    '課長',
-    '阿明 ㄅ',
-    '小華 ㄇ',
-    '',
-    '課長 刪除',
-    '阿明',
-    '小華',
-    '',
-    '──────────',
-    '',
-    '🏅 支援級分：',
-    '',
-    formatGradeList(),
-  ].join('\n');
+  return buildWhaleHelp(formatGradeList());
 }
 
 function formatQuickHelp() {
-  return [
-    '🍄 皮克敏打菇助手',
-    '',
-    '可使用以下指令：',
-    '',
-    '• 菇 查詢',
-    '• 菇 玩家',
-    '• 菇 幫助',
-    '',
-    '查看完整說明請輸入：',
-    '',
-    '菇 幫助',
-  ].join('\n');
+  return buildQuickHelp();
 }
 
 function formatHelp() {
-  return [
-    '📖 使用說明',
-    '',
-    '🍄 皮克敏打菇助手',
-    '',
-    '📋 查詢',
-    '',
-    '• 菇 查詢',
-    '查看所有玩家剩餘次數',
-    '',
-    '• 菇 玩家',
-    '查看玩家名單',
-    '',
-    '• 菇 <玩家名稱>',
-    '查看指定玩家剩餘次數',
-    '',
-    '🍄 活動巨菇最佳分配',
-    '',
-    '• 菇 最佳 <巨菇數>',
-    '依戰力與剩餘次數計算最佳分配',
-    '',
-    '例如：',
-    '',
-    '菇 最佳 2',
-    '菇 最佳 3',
-    '',
-    '✏️ 修改次數',
-    '',
-    '• 菇 <玩家名稱> -1',
-    '扣除一次（最低 0）',
-    '',
-    '• 菇 <玩家名稱> +1',
-    '增加一次（最高 3）',
-    '',
-    '• 菇 <玩家名稱> -2 / +2',
-    '一次加減多次（自動夾在 0～3）',
-    '',
-    '• 菇 <玩家名稱> <0~3>',
-    '直接設定剩餘次數',
-    '',
-    '• 菇 <玩家名稱> out',
-    '直接設定為 0 次',
-    '',
-    '• 菇 全部 <操作>',
-    '一次修改全部玩家',
-    '',
-    '• 菇 <玩家> <操作> <玩家> <操作>',
-    '一次修改多位玩家',
-    '',
-    '例如：',
-    '',
-    '菇 小蓁 -1',
-    '菇 jun 2',
-    '',
-    '⚔️ 戰力（不需「菇」前綴）',
-    '',
-    '• 戰力',
-    '查看所有玩家戰力（含總戰力、平均、最高、最低）',
-    '',
-    '• 戰力 <玩家名稱>',
-    '查看指定玩家戰力',
-    '',
-    '• 戰力 <玩家名稱> <數值>',
-    '設定玩家戰力',
-    '',
-    '• 戰力 <玩家> <數值> <玩家> <數值>',
-    '一次設定多位玩家戰力',
-    '',
-    '• 戰力合計',
-    '加總所有玩家戰力',
-    '',
-    '• 戰力合計 <玩家> <玩家> ...',
-    '加總指定玩家戰力',
-    '',
-    '• 菇 玩家 <玩家名稱>',
-    '查看玩家資訊',
-    '',
-    'ℹ️ 說明',
-    '',
-    '• 玩家名稱需與玩家名單一致',
-    '• 每位玩家每天預設 3 次',
-    '• 每天 00:00（Asia/Taipei）自動重置',
-    '',
-    '💎 課長排行榜（不需「菇」前綴）',
-    '',
-    '• 課長',
-    '查看課長排行榜',
-    '',
-    '• 課長 幫助',
-    '查看課長系統完整說明',
-  ].join('\n');
+  return buildHelp(formatGradeList());
 }
 
 function formatWelcome() {
@@ -682,6 +543,19 @@ function parseCommand(text) {
   const whaleCommand = parseWhaleCommand(trimmed);
   if (whaleCommand) return whaleCommand;
 
+  // System commands are bare keywords (no prefix). Keyword list lives in
+  // src/constants/commands.js so it stays in sync with 全部指令 / suggestion.
+  if (SYSTEM_COMMANDS.includes(trimmed)) {
+    const systemTypes = {
+      幫助: 'help',
+      全部指令: 'all-commands',
+      資訊: 'about',
+      版本: 'version',
+      更新紀錄: 'update-log',
+    };
+    return { type: systemTypes[trimmed] };
+  }
+
   // Power commands intentionally have no 菇 prefix.
   // 戰力合計 must be checked before the 戰力 branches below.
   if (trimmed === '戰力合計') return { type: 'power-sum', names: [] };
@@ -876,6 +750,26 @@ async function handleCommand(groupId, command, replyToken) {
 
   if (command.type === 'help') {
     await reply(replyToken, formatHelp());
+    return;
+  }
+
+  if (command.type === 'all-commands') {
+    await reply(replyToken, buildAllCommands());
+    return;
+  }
+
+  if (command.type === 'about') {
+    await reply(replyToken, buildAbout());
+    return;
+  }
+
+  if (command.type === 'version') {
+    await reply(replyToken, buildVersion());
+    return;
+  }
+
+  if (command.type === 'update-log') {
+    await reply(replyToken, buildUpdateLog());
     return;
   }
 
@@ -1074,7 +968,16 @@ async function handleEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'text') return;
 
   const command = parseCommand(event.message.text);
-  if (!command) return;
+  if (!command) {
+    // Not a recognised command. If it still looks like a known-prefix command
+    // (菇 / 戰力 / 課長) the user probably mistyped, so offer suggestions.
+    // Ordinary chatter has no known prefix and is silently ignored as before.
+    const text = event.message.text.trim();
+    if (matchedPrefix(text)) {
+      await reply(event.replyToken, buildCommandSuggestion(text, suggestCommands(text)));
+    }
+    return;
+  }
 
   try {
     // Whale commands are fully independent of the players table, so they must
