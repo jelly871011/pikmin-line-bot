@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import cron from 'node-cron';
 import { middleware, messagingApi } from '@line/bot-sdk';
 import {
   MAX_ATTEMPTS,
@@ -10,10 +9,10 @@ import {
   getPlayer,
   updateRemaining,
   updatePower,
-  resetRemaining,
   createPlayers,
 } from './services/playerService.js';
-import { optimizeMushrooms } from './services/mushroomOptimizer.js';
+import { optimizeMushrooms, MAX_MEMBERS } from './services/mushroomOptimizer.js';
+import { registerJobs } from './jobs/index.js';
 
 const { LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET } = process.env;
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -74,8 +73,28 @@ function formatPlayerInfo(player) {
 }
 
 function formatPowerAll(players) {
+  if (!players.length) {
+    return ['⚔️ 玩家戰力', '', '目前尚無玩家資料'].join('\n');
+  }
+
   const rows = players.map((player) => `${player.player_name}：${player.power}`);
-  return ['⚔️ 玩家戰力', '', ...(rows.length ? rows : ['目前尚無玩家資料'])].join('\n');
+  const total = players.reduce((sum, player) => sum + player.power, 0);
+  const average = Math.round(total / players.length);
+  const highest = players.reduce((best, player) => (player.power > best.power ? player : best));
+  const lowest = players.reduce((worst, player) => (player.power < worst.power ? player : worst));
+
+  return [
+    '⚔️ 玩家戰力',
+    '',
+    ...rows,
+    '',
+    '──────────',
+    '',
+    `總戰力：${total}`,
+    `平均戰力：${average}`,
+    `最高戰力：${highest.player_name}（${highest.power}）`,
+    `最低戰力：${lowest.player_name}（${lowest.power}）`,
+  ].join('\n');
 }
 
 function formatPowerOne(player) {
@@ -88,8 +107,15 @@ function formatPowerOne(player) {
   ].join('\n');
 }
 
-function formatPowerUpdate(name, previousPower, power) {
-  return ['⚔️ 已更新戰力', '', `${name}：`, '', `${previousPower} → ${power}`].join('\n');
+function formatPowerUpdate(updated, missingPlayers = []) {
+  const lines = ['⚔️ 已更新戰力'];
+  for (const { name, previousPower, power } of updated) {
+    lines.push('', name, `${previousPower} → ${power}`);
+  }
+  if (missingPlayers.length) {
+    lines.push('', formatMissingPlayers(missingPlayers));
+  }
+  return lines.join('\n');
 }
 
 function formatPowerSum(players) {
@@ -123,34 +149,62 @@ function formatOptimizeEmpty() {
   return ['🍄 活動巨菇最佳方案', '', '目前沒有可派遣的玩家。', '', '（需要有剩餘次數且戰力大於 0）'].join('\n');
 }
 
-function formatOptimize(plan, count) {
-  const lines = [`🍄 活動巨菇最佳方案（${count} 顆）`, ''];
+function formatOptimizeInfeasible(requested, maxCount) {
+  const canArrange = maxCount > 0
+    ? `目前可安排：\n\n${maxCount} 顆。`
+    : '目前無法安排任何活動巨菇。';
+  return [
+    `⚠️ 無法規劃 ${requested} 顆活動巨菇。`,
+    '',
+    '原因：',
+    '',
+    '目前剩餘派遣次數不足。',
+    '',
+    canArrange,
+  ].join('\n');
+}
+
+function formatOptimize(plan) {
+  const lines = ['🍄 活動巨菇最佳方案', ''];
 
   plan.mushrooms.forEach((mushroom, index) => {
-    lines.push('══════════════', '', `🍄 巨菇 ${index + 1}`, stars(mushroom.stars), '', '目標：', `${mushroom.target}`, '', '──────────', '');
-    if (mushroom.members.length) {
-      for (const member of mushroom.members) {
-        const source = plan.dispatch.find((entry) => entry.name === member.name);
-        const full = source && member.power === source.power;
-        lines.push(member.name, `${member.power}${full ? '（全派）' : ''}`);
-      }
-    } else {
-      lines.push('（未分配）');
+    lines.push(
+      '══════════════',
+      '',
+      `🍄 巨菇${index + 1}`,
+      stars(mushroom.stars),
+      `👥 ${mushroom.members.length} / ${MAX_MEMBERS}`,
+      `⚔️ ${mushroom.total}`,
+      '',
+      '──────────',
+      '',
+    );
+    for (const member of mushroom.members) {
+      lines.push(`${member.name}　${member.power}`);
     }
-    lines.push('', '──────────', '', `總戰力：${mushroom.total}`, `浪費：${mushroom.waste}`, '');
+    lines.push('');
   });
 
-  const totalStarCount = plan.mushrooms.reduce((sum, mushroom) => sum + mushroom.stars + 1, 0);
-  lines.push('══════════════', '', `總星數：${'⭐'.repeat(totalStarCount)}`, '', `使用戰力：${plan.usedPower}`, '', `剩餘未分配：${plan.unusedPower}`);
+  lines.push(
+    '══════════════',
+    '',
+    '📊 統計',
+    '',
+    `⭐ 總星數：${plan.totalStars}`,
+    '',
+    `⚔️ 使用戰力：${plan.usedPower}`,
+    '',
+    `⚔️ 剩餘未分配：${plan.unusedPower}`,
+  );
 
   lines.push('', '📌 玩家派遣摘要', '');
   plan.dispatch.forEach((entry, index) => {
     if (index > 0) lines.push('──────────', '');
-    lines.push(entry.name, `剩餘次數：${entry.assignments.length} / ${entry.remaining}`);
+    lines.push(`👤 ${entry.name}`, '');
     for (const assignment of entry.assignments) {
-      lines.push(`巨菇${assignment.mushroom + 1}：${assignment.power}`);
+      lines.push(`🍄 巨菇${assignment.mushroom + 1}`, `${assignment.power}`);
     }
-    lines.push('');
+    lines.push('', `剩餘次數：${entry.remaining - entry.assignments.length} / ${entry.remaining}`, '');
   });
 
   return lines.join('\n').trimEnd();
@@ -230,13 +284,16 @@ function formatHelp() {
     '⚔️ 戰力（不需「菇」前綴）',
     '',
     '• 戰力',
-    '查看所有玩家戰力',
+    '查看所有玩家戰力（含總戰力、平均、最高、最低）',
     '',
     '• 戰力 <玩家名稱>',
     '查看指定玩家戰力',
     '',
     '• 戰力 <玩家名稱> <數值>',
     '設定玩家戰力',
+    '',
+    '• 戰力 <玩家> <數值> <玩家> <數值>',
+    '一次設定多位玩家戰力',
     '',
     '• 戰力合計',
     '加總所有玩家戰力',
@@ -292,13 +349,16 @@ function formatWelcome() {
     '⚔️ 戰力功能（不需「菇」）：',
     '',
     '• 戰力',
-    '查看所有玩家戰力',
+    '查看所有玩家戰力（含總戰力、平均、最高、最低）',
     '',
     '• 戰力 <玩家>',
     '查詢單人戰力',
     '',
     '• 戰力 <玩家> <數值>',
     '設定戰力',
+    '',
+    '• 戰力 <玩家> <數值> <玩家> <數值>',
+    '一次設定多位玩家戰力',
     '',
     '• 戰力合計',
     '加總所有玩家戰力',
@@ -380,11 +440,21 @@ function parseCommand(text) {
   }
 
   if (trimmed === '戰力') return { type: 'power-all' };
-  if (/^戰力 +/.test(trimmed)) {
-    const powerTokens = trimmed.replace(/^戰力 +/, '').trim().split(/\s+/);
+  // 戰力 may be followed by content on the same line or across newlines, e.g.
+  //   戰力 小蓁 12000 牙齒 9800        (single line, many pairs)
+  //   戰力\n小蓁 12000\n牙齒 9800       (one pair per line)
+  if (/^戰力[ \n\r\t]/.test(trimmed)) {
+    const powerTokens = trimmed.replace(/^戰力/, '').trim().split(/\s+/).filter(Boolean);
     if (powerTokens.length === 1) return { type: 'power-one', name: powerTokens[0] };
-    if (powerTokens.length === 2 && /^\d+$/.test(powerTokens[1])) {
-      return { type: 'power-set', name: powerTokens[0], power: Number(powerTokens[1]) };
+    // A single name + value still sets one player; two or more name/value pairs
+    // set many at once. Anything not forming clean pairs is rejected.
+    if (powerTokens.length >= 2 && powerTokens.length % 2 === 0) {
+      const updates = [];
+      for (let index = 0; index < powerTokens.length; index += 2) {
+        if (!/^\d+$/.test(powerTokens[index + 1])) return null;
+        updates.push({ name: powerTokens[index], power: Number(powerTokens[index + 1]) });
+      }
+      return { type: 'power-set', updates };
     }
     return null;
   }
@@ -519,14 +589,25 @@ async function handleCommand(groupId, command, replyToken) {
   }
 
   if (command.type === 'power-set') {
-    const player = await getPlayer(groupId, command.name);
-    if (!player) {
-      await reply(replyToken, formatPlayerNotFound(command.name));
+    const players = await getPlayers(groupId);
+    const byName = new Map(players.map((player) => [player.player_name, player]));
+    const updated = [];
+    const missingPlayers = [];
+    for (const { name, power } of command.updates) {
+      const player = byName.get(name);
+      if (!player) {
+        missingPlayers.push(name);
+        continue;
+      }
+      const previousPower = player.power;
+      await updatePower(groupId, name, power);
+      updated.push({ name, previousPower, power });
+    }
+    if (!updated.length) {
+      await reply(replyToken, formatMissingPlayers(missingPlayers));
       return;
     }
-    const previousPower = player.power;
-    await updatePower(groupId, command.name, command.power);
-    await reply(replyToken, formatPowerUpdate(command.name, previousPower, command.power));
+    await reply(replyToken, formatPowerUpdate(updated, missingPlayers));
     return;
   }
 
@@ -538,10 +619,12 @@ async function handleCommand(groupId, command, replyToken) {
     const players = await getPlayers(groupId);
     const plan = optimizeMushrooms(players, command.count);
     if (!plan.ok) {
-      await reply(replyToken, plan.reason === 'range' ? formatOptimizeRange() : formatOptimizeEmpty());
+      if (plan.reason === 'range') await reply(replyToken, formatOptimizeRange());
+      else if (plan.reason === 'infeasible') await reply(replyToken, formatOptimizeInfeasible(plan.requested, plan.maxCount));
+      else await reply(replyToken, formatOptimizeEmpty());
       return;
     }
-    await reply(replyToken, formatOptimize(plan, command.count));
+    await reply(replyToken, formatOptimize(plan));
     return;
   }
 
@@ -673,15 +756,7 @@ app.use((error, _req, res, _next) => {
   res.status(error.status ?? 500).json({ error: 'Internal server error' });
 });
 
-// node-cron uses IANA time zones, so this always runs at Taiwan midnight.
-cron.schedule('0 0 * * *', async () => {
-  try {
-    await resetRemaining();
-    console.info('Daily player data reset to defaults.');
-  } catch (error) {
-    console.error('Daily reset failed:', error);
-  }
-}, { timezone: 'Asia/Taipei' });
+registerJobs();
 
 app.listen(PORT, () => {
   console.info('Server started');
