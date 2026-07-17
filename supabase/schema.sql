@@ -38,3 +38,44 @@ create policy "allow anon update players"
   to anon
   using (true)
   with check (true);
+
+-- Whale ranking system (v1.4.0). Fully independent of the players table.
+create table if not exists whales (
+  id uuid primary key default gen_random_uuid(),
+  group_id text not null,
+  name text not null,
+  grade text not null default 'ㄦ',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (group_id, name)
+);
+
+create index if not exists whales_group_id_idx on whales (group_id);
+
+-- Row Level Security, mirroring the players table: anon read/write/delete.
+alter table whales enable row level security;
+
+drop policy if exists "allow anon read whales" on whales;
+create policy "allow anon read whales"
+  on whales for select
+  to anon
+  using (true);
+
+drop policy if exists "allow anon insert whales" on whales;
+create policy "allow anon insert whales"
+  on whales for insert
+  to anon
+  with check (true);
+
+drop policy if exists "allow anon update whales" on whales;
+create policy "allow anon update whales"
+  on whales for update
+  to anon
+  using (true)
+  with check (true);
+
+drop policy if exists "allow anon delete whales" on whales;
+create policy "allow anon delete whales"
+  on whales for delete
+  to anon
+  using (true);

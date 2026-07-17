@@ -4,6 +4,23 @@
 
 ## Changelog
 
+### v1.4.0
+
+- 新增課長排行榜系統。
+- 新增獨立 whales 資料表。
+- 支援課長排行榜。
+- 支援課長統計。
+- 支援單人查詢。
+- 支援新增。
+- 支援修改級分。
+- 支援刪除。
+- 支援批次新增。
+- 支援批次修改。
+- 支援批次刪除。
+- 新增課長幫助。
+- 防止重複新增。
+- 固定級分排序（ㄅ→ㄆ→ㄇ→ㄈ→ㄦ）。
+
 ### v1.3.2
 
 - 改善活動巨菇最佳化策略：`菇 最佳 N` 在所有合法方案中找出整體效益最高的派遣，而非優先完成單一巨菇。
@@ -80,6 +97,42 @@
 `菇查詢`、`菇玩家`、`菇幫助` 分別等同於有空格的 `菇 查詢`、`菇 玩家`、`菇 幫助`。
 
 固定玩家為「小蓁、牙齒、肌膚、青青、jun」，每位玩家預設為 3 次。系統不會新增玩家；輸入不在名單中的名字時，會提示使用 `菇 玩家` 查看名單。所有回應都使用 LINE 的 `replyMessage`。
+
+### 課長排行榜（v1.4.0）
+
+課長排行榜是完全獨立的系統，使用獨立的 `whales` 資料表（不需「菇」前綴）。級分固定只有 `ㄅ`、`ㄆ`、`ㄇ`、`ㄈ`、`ㄦ`，排序為 ㄅ→ㄆ→ㄇ→ㄈ→ㄦ。
+
+| 訊息 | 結果 |
+| --- | --- |
+| `課長` | 顯示課長排行榜（依級分分組） |
+| `課長 統計` | 顯示各級分人數統計 |
+| `課長 阿明` | 查詢單一課長的級分 |
+| `課長 新增 阿明` | 新增課長（預設級分 `ㄦ`） |
+| `課長 新增 阿明 ㄅ` | 新增課長並指定級分 |
+| `課長 阿明 ㄆ` | 修改課長級分 |
+| `課長 刪除 阿明` | 刪除課長 |
+| `課長 幫助` | 顯示課長系統完整說明 |
+
+批次操作（單行以空白分隔，或多行每列一筆）：
+
+```text
+課長 新增
+阿明 ㄅ
+小華 ㄆ
+Kevin
+
+課長
+阿明 ㄅ
+小華 ㄇ
+
+課長 刪除
+阿明
+Kevin
+```
+
+- 新增未填級分時預設為 `ㄦ`；重複新增會提示「⚠️ 阿明 已經在課長名單中。」。
+- 批次修改/刪除時找不到的名稱會略過，並在最後提示「⚠️ 找不到課長：」。
+- 輸入不存在的級分（例如 `ㄉ`、`A`、`S`）會回覆「⚠️ 級分只能是：ㄅ、ㄆ、ㄇ、ㄈ、ㄦ」。
 
 ## 使用範例
 
@@ -349,7 +402,7 @@ Bot 離開群組時：
 Bot 的資料儲存在 Supabase（PostgreSQL）。部署前請先建立專案與資料表。
 
 1. 到 [Supabase](https://supabase.com/) 註冊並建立一個新的 **Project**。
-2. 在專案的 **SQL Editor**，貼上並執行 [`supabase/schema.sql`](supabase/schema.sql)，建立 `players` 資料表：
+2. 在專案的 **SQL Editor**，貼上並執行 [`supabase/schema.sql`](supabase/schema.sql)，建立 `players` 與 `whales` 資料表（含 RLS policies）：
 
    ```sql
    create extension if not exists "pgcrypto";
@@ -365,7 +418,22 @@ Bot 的資料儲存在 Supabase（PostgreSQL）。部署前請先建立專案與
    );
 
    create index if not exists players_group_id_idx on players (group_id);
+
+   -- 課長排行榜（v1.4.0），與 players 完全獨立
+   create table if not exists whales (
+     id uuid primary key default gen_random_uuid(),
+     group_id text not null,
+     name text not null,
+     grade text not null default 'ㄦ',
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now(),
+     unique (group_id, name)
+   );
+
+   create index if not exists whales_group_id_idx on whales (group_id);
    ```
+
+   完整內容（含兩張表的 RLS policies）請直接執行 [`supabase/schema.sql`](supabase/schema.sql)。
 
 3. 到專案的 **Settings → API**，取得兩個值：
 
