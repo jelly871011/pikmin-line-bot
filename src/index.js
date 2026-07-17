@@ -151,7 +151,7 @@ function formatOptimizeEmpty() {
 
 function formatOptimizeInfeasible(requested, maxCount) {
   const canArrange = maxCount > 0
-    ? `目前可安排：\n\n${maxCount} 顆。`
+    ? `目前最多可安排：\n\n${maxCount} 顆。`
     : '目前無法安排任何活動巨菇。';
   return [
     `⚠️ 無法規劃 ${requested} 顆活動巨菇。`,
@@ -164,14 +164,14 @@ function formatOptimizeInfeasible(requested, maxCount) {
   ].join('\n');
 }
 
-function formatOptimize(plan) {
-  const lines = ['🍄 活動巨菇最佳方案', ''];
+function formatOptimize(plan, count) {
+  const lines = [`🍄 活動巨菇最佳方案（${count} 顆）`, ''];
 
   plan.mushrooms.forEach((mushroom, index) => {
     lines.push(
       '══════════════',
       '',
-      `🍄 巨菇${index + 1}`,
+      `🍄 巨菇 ${index + 1}`,
       stars(mushroom.stars),
       `👥 ${mushroom.members.length} / ${MAX_MEMBERS}`,
       `⚔️ ${mushroom.total}`,
@@ -190,21 +190,24 @@ function formatOptimize(plan) {
     '',
     '📊 統計',
     '',
-    `⭐ 總星數：${plan.totalStars}`,
+    '⭐ 總星數：',
+    `${plan.totalStars}`,
     '',
-    `⚔️ 使用戰力：${plan.usedPower}`,
+    '⚔️ 使用戰力：',
+    `${plan.usedPower}`,
     '',
-    `⚔️ 剩餘未分配：${plan.unusedPower}`,
+    '⚔️ 剩餘戰力：',
+    `${plan.unusedPower}`,
   );
 
-  lines.push('', '📌 玩家派遣摘要', '');
+  lines.push('', '📌 玩家派遣摘要', '', '══════════════', '');
   plan.dispatch.forEach((entry, index) => {
     if (index > 0) lines.push('──────────', '');
     lines.push(`👤 ${entry.name}`, '');
     for (const assignment of entry.assignments) {
       lines.push(`🍄 巨菇${assignment.mushroom + 1}`, `${assignment.power}`);
     }
-    lines.push('', `剩餘次數：${entry.remaining - entry.assignments.length} / ${entry.remaining}`, '');
+    lines.push('', '剩餘次數：', `${entry.remaining - entry.assignments.length} / ${entry.remaining}`, '');
   });
 
   return lines.join('\n').trimEnd();
@@ -624,7 +627,7 @@ async function handleCommand(groupId, command, replyToken) {
       else await reply(replyToken, formatOptimizeEmpty());
       return;
     }
-    await reply(replyToken, formatOptimize(plan));
+    await reply(replyToken, formatOptimize(plan, command.count));
     return;
   }
 
