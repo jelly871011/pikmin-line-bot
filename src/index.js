@@ -13,6 +13,7 @@ import {
   resetRemaining,
   createPlayers,
 } from './services/playerService.js';
+import { optimizeMushrooms } from './services/mushroomOptimizer.js';
 
 const { LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET } = process.env;
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -105,6 +106,56 @@ function formatPowerSum(players) {
   ].join('\n');
 }
 
+// A mushroom's displayed stars are its threshold index + 1 (index 1 -> ⭐⭐, …).
+function stars(level) {
+  return '⭐'.repeat(level + 1);
+}
+
+function formatOptimizeMissing() {
+  return ['請輸入：', '', '菇 最佳 2', '', '或：', '', '菇 最佳 3'].join('\n');
+}
+
+function formatOptimizeRange() {
+  return '⚠️ 巨菇數量需介於 1～10。';
+}
+
+function formatOptimizeEmpty() {
+  return ['🍄 活動巨菇最佳方案', '', '目前沒有可派遣的玩家。', '', '（需要有剩餘次數且戰力大於 0）'].join('\n');
+}
+
+function formatOptimize(plan, count) {
+  const lines = [`🍄 活動巨菇最佳方案（${count} 顆）`, ''];
+
+  plan.mushrooms.forEach((mushroom, index) => {
+    lines.push('══════════════', '', `🍄 巨菇 ${index + 1}`, stars(mushroom.stars), '', '目標：', `${mushroom.target}`, '', '──────────', '');
+    if (mushroom.members.length) {
+      for (const member of mushroom.members) {
+        const source = plan.dispatch.find((entry) => entry.name === member.name);
+        const full = source && member.power === source.power;
+        lines.push(member.name, `${member.power}${full ? '（全派）' : ''}`);
+      }
+    } else {
+      lines.push('（未分配）');
+    }
+    lines.push('', '──────────', '', `總戰力：${mushroom.total}`, `浪費：${mushroom.waste}`, '');
+  });
+
+  const totalStarCount = plan.mushrooms.reduce((sum, mushroom) => sum + mushroom.stars + 1, 0);
+  lines.push('══════════════', '', `總星數：${'⭐'.repeat(totalStarCount)}`, '', `使用戰力：${plan.usedPower}`, '', `剩餘未分配：${plan.unusedPower}`);
+
+  lines.push('', '📌 玩家派遣摘要', '');
+  plan.dispatch.forEach((entry, index) => {
+    if (index > 0) lines.push('──────────', '');
+    lines.push(entry.name, `剩餘次數：${entry.assignments.length} / ${entry.remaining}`);
+    for (const assignment of entry.assignments) {
+      lines.push(`巨菇${assignment.mushroom + 1}：${assignment.power}`);
+    }
+    lines.push('');
+  });
+
+  return lines.join('\n').trimEnd();
+}
+
 function formatQuickHelp() {
   return [
     '🍄 皮克敏打菇助手',
@@ -137,6 +188,16 @@ function formatHelp() {
     '',
     '• 菇 <玩家名稱>',
     '查看指定玩家剩餘次數',
+    '',
+    '🍄 活動巨菇最佳分配',
+    '',
+    '• 菇 最佳 <巨菇數>',
+    '依戰力與剩餘次數計算最佳分配',
+    '',
+    '例如：',
+    '',
+    '菇 最佳 2',
+    '菇 最佳 3',
     '',
     '✏️ 修改次數',
     '',
@@ -221,6 +282,12 @@ function formatWelcome() {
     '• 菇 <玩家> +1',
     '',
     '• 菇 <玩家> 2',
+    '',
+    '🍄 活動巨菇最佳分配：',
+    '',
+    '• 菇 最佳 2',
+    '• 菇 最佳 3',
+    '依戰力與剩餘次數計算最佳分配',
     '',
     '⚔️ 戰力功能（不需「菇」）：',
     '',
@@ -343,6 +410,14 @@ function parseCommand(text) {
     return { type: 'player-info', name: tokens[1] };
   }
 
+  if (tokens[0] === '最佳') {
+    if (tokens.length === 1) return { type: 'optimize', count: null };
+    if (tokens.length === 2 && /^\d+$/.test(tokens[1])) {
+      return { type: 'optimize', count: Number(tokens[1]) };
+    }
+    return { type: 'optimize', count: null };
+  }
+
   if (tokens.length >= 2 && tokens.length % 2 === 0) {
     const updates = [];
     for (let index = 0; index < tokens.length; index += 2) {
@@ -452,6 +527,21 @@ async function handleCommand(groupId, command, replyToken) {
     const previousPower = player.power;
     await updatePower(groupId, command.name, command.power);
     await reply(replyToken, formatPowerUpdate(command.name, previousPower, command.power));
+    return;
+  }
+
+  if (command.type === 'optimize') {
+    if (command.count === null) {
+      await reply(replyToken, formatOptimizeMissing());
+      return;
+    }
+    const players = await getPlayers(groupId);
+    const plan = optimizeMushrooms(players, command.count);
+    if (!plan.ok) {
+      await reply(replyToken, plan.reason === 'range' ? formatOptimizeRange() : formatOptimizeEmpty());
+      return;
+    }
+    await reply(replyToken, formatOptimize(plan, command.count));
     return;
   }
 
