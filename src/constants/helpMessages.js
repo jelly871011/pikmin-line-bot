@@ -26,6 +26,13 @@ export const ABOUT = {
 // Adding a release here surfaces it in the 更新紀錄 command automatically.
 export const UPDATE_LOG = [
   {
+    version: '1.4.2',
+    changes: [
+      '新增 VIP 課長等級，排在 ㄅ 之上（最高級）。',
+      'VIP 輸入不分大小寫，一律以大寫 VIP 儲存與顯示；排行榜以 👑 標記。',
+    ],
+  },
+  {
     version: '1.4.1',
     changes: [
       '指令改為設定驅動：集中管理於 commands.js，Help／全部指令／推薦共用同一份清單。',

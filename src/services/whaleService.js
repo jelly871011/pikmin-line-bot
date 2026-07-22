@@ -4,9 +4,20 @@ import { supabase } from '../lib/supabase.js';
 // every database operation for whales lives here so index.js only parses
 // commands and formats replies.
 
-// Fixed grade set, ordered best-first. No other grade is accepted.
-const WHALE_GRADES = ['ㄅ', 'ㄆ', 'ㄇ', 'ㄈ', 'ㄦ'];
+// Fixed grade set, ordered best-first (highest rank first). No other grade is
+// accepted. VIP is the top tier, above ㄅ.
+const WHALE_GRADES = ['VIP', 'ㄅ', 'ㄆ', 'ㄇ', 'ㄈ', 'ㄦ'];
 const DEFAULT_GRADE = 'ㄦ';
+
+// Normalise a user-supplied grade to its canonical form, or return null if it
+// is not a valid grade. VIP is accepted in any case (vip / Vip / VIP) and
+// stored/displayed as upper-case VIP; the 注音 grades match exactly.
+function normalizeGrade(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.toUpperCase() === 'VIP') return 'VIP';
+  return WHALE_GRADES.includes(trimmed) ? trimmed : null;
+}
 
 // Raised when Supabase returns an error, so callers can respond with a single
 // generic message without inspecting the cause. Mirrors PlayerServiceError.
@@ -24,7 +35,7 @@ function fail(context, error) {
 }
 
 function isValidGrade(grade) {
-  return WHALE_GRADES.includes(grade);
+  return normalizeGrade(grade) !== null;
 }
 
 const gradeRank = (grade) => {
@@ -95,6 +106,7 @@ export {
   DEFAULT_GRADE,
   WhaleServiceError,
   isValidGrade,
+  normalizeGrade,
   getWhales,
   getWhale,
   addWhale,

@@ -16,6 +16,7 @@ import {
   WHALE_GRADES,
   WhaleServiceError,
   isValidGrade,
+  normalizeGrade,
   getWhales,
   getWhale,
   addWhale,
@@ -237,7 +238,9 @@ function formatOptimize(plan, count) {
 
 // Medal / rank markers for each grade position (ㄅ first). Grades beyond the
 // podium fall back to keycap numbers.
-const WHALE_RANK_MARKERS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+// Rank markers align with WHALE_GRADES order (VIP first). VIP gets the crown;
+// the 注音 grades keep the medal / keycap sequence below it.
+const WHALE_RANK_MARKERS = ['👑', '🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
 
 function whaleRankMarker(index) {
   return WHALE_RANK_MARKERS[index] ?? '🔹';
@@ -513,7 +516,7 @@ function parseWhaleAddEntries(rest) {
     const name = tokens[index];
     const next = tokens[index + 1];
     if (next !== undefined && isValidGrade(next)) {
-      entries.push({ name, grade: next });
+      entries.push({ name, grade: normalizeGrade(next) });
       index += 2;
     } else {
       entries.push({ name, grade: null }); // null -> service default (ㄦ)
@@ -698,7 +701,8 @@ async function handleWhaleCommand(groupId, command, replyToken) {
     }
     const updated = [];
     const missingNames = [];
-    for (const { name, grade } of command.updates) {
+    for (const { name, grade: rawGrade } of command.updates) {
+      const grade = normalizeGrade(rawGrade);
       const whale = await getWhale(groupId, name);
       if (!whale) {
         missingNames.push(name);
